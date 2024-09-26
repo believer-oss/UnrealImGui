@@ -7,6 +7,9 @@
 #include "ImGuiInteroperability.h"
 #include "Utilities/Arrays.h"
 #include "VersionCompatibility.h"
+#include "ImGuiModule.h"
+#include "ImGuiModuleProperties.h"
+#include "ImGuiContextManager.h"
 
 #include <GenericPlatform/GenericPlatformFile.h>
 #include <Misc/Paths.h>
@@ -84,6 +87,13 @@ FImGuiContextProxy::FImGuiContextProxy(const FString& InName, int32 InContextInd
 	// Set this context in ImGui for initialization (any allocations will be tracked in this context).
 	SetAsCurrent();
 
+	FImGuiModuleProperties& ModuleProperties = FImGuiModule::Get().GetProperties();
+	ImGuiStyle* DefaultStyle = ModuleProperties.GetDefaultStyle().Get();
+	if (DefaultStyle)
+	{
+		ImGui::GetStyle() = *DefaultStyle;
+	}
+
 	// Start initialization.
 	ImGuiIO& IO = ImGui::GetIO();
 
@@ -100,9 +110,11 @@ FImGuiContextProxy::FImGuiContextProxy(const FString& InName, int32 InContextInd
 	// Initialize key mapping, so context can correctly interpret input state.
 	ImGuiInterops::SetUnrealKeyMap(IO);
 
+	ImGuiInterops::SetClipboardFunctions(IO);
+
 	// Begin frame to complete context initialization (this is to avoid problems with other systems calling to ImGui
 	// during startup).
-	BeginFrame();
+	BeginFrame(nullptr);
 }
 
 FImGuiContextProxy::~FImGuiContextProxy()
@@ -130,6 +142,13 @@ void FImGuiContextProxy::SetDPIScale(float Scale)
 		DPIScale = Scale;
 
 		ImGuiStyle NewStyle = ImGuiStyle();
+		FImGuiModuleProperties& ModuleProperties = FImGuiModule::Get().GetProperties();
+		ImGuiStyle* DefaultStyle = ModuleProperties.GetDefaultStyle().Get();
+		if (DefaultStyle)
+		{
+			NewStyle = *DefaultStyle;
+		}
+
 		NewStyle.ScaleAllSizes(Scale);
 
 		FGuardCurrentContext GuardContext;
@@ -169,10 +188,10 @@ void FImGuiContextProxy::DrawDebug()
 	}
 }
 
-void FImGuiContextProxy::Tick(float DeltaSeconds)
+void FImGuiContextProxy::Tick(float DeltaSeconds, FImGuiContextManager& ContextManager)
 {
 	// Making sure that we tick only once per frame.
-	if (LastFrameNumber < GFrameNumber)
+	if (GUsingNullRHI || LastFrameNumber < GFrameNumber)
 	{
 		LastFrameNumber = GFrameNumber;
 
@@ -185,23 +204,24 @@ void FImGuiContextProxy::Tick(float DeltaSeconds)
 
 			// Ending frame will produce render output that we capture and store for later use. This also puts context to
 			// state in which it does not allow to draw controls, so we want to immediately start a new frame.
-			EndFrame();
+			EndFrame(ContextManager);
 		}
 
 		// Update context information (some data need to be collected before starting a new frame while some other data
 		// may need to be collected after).
 		bHasActiveItem = ImGui::IsAnyItemActive();
+		bHasHoveredAnyWindow = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
 		MouseCursor = ImGuiInterops::ToSlateMouseCursor(ImGui::GetMouseCursor());
 
 		// Begin a new frame and set the context back to a state in which it allows to draw controls.
-		BeginFrame(DeltaSeconds);
+		BeginFrame(&ContextManager, DeltaSeconds);
 
 		// Update remaining context information.
 		bWantsMouseCapture = ImGui::GetIO().WantCaptureMouse;
 	}
 }
 
-void FImGuiContextProxy::BeginFrame(float DeltaTime)
+void FImGuiContextProxy::BeginFrame(FImGuiContextManager* ContextManager, float DeltaTime)
 {
 	if (!bIsFrameStarted)
 	{
@@ -209,11 +229,17 @@ void FImGuiContextProxy::BeginFrame(float DeltaTime)
 		IO.DeltaTime = DeltaTime;
 
 		ImGuiInterops::CopyInput(IO, InputState);
+
 		InputState.ClearUpdateState();
 
 		IO.DisplaySize = { (float)DisplaySize.X, (float)DisplaySize.Y };
 
 		ImGui::NewFrame();
+
+		if (ContextManager)
+		{
+			ContextManager->GetNetControl().ServerCaptureInput(ContextIndex);
+		}
 
 		bIsFrameStarted = true;
 		bIsDrawEarlyDebugCalled = false;
@@ -221,15 +247,28 @@ void FImGuiContextProxy::BeginFrame(float DeltaTime)
 	}
 }
 
-void FImGuiContextProxy::EndFrame()
+void FImGuiContextProxy::EndFrame(FImGuiContextManager& ContextManager)
 {
 	if (bIsFrameStarted)
 	{
+		//if (ContextManager)
+		// {
+		// 	ContextManager.GetNetControl().ServerCaptureInput(ContextIndex);
+		// }
+
 		// Prepare draw data (after this call we cannot draw to this context until we start a new frame).
 		ImGui::Render();
 
 		// Update our draw data, so we can use them later during Slate rendering while ImGui is in the middle of the
 		// next frame.
+		DrawLists.SetNum(0, EAllowShrinking::No);
+
+		// Put net data in first so it will be drawn under the local imgui
+		if (TUniquePtr<ImDrawData> NetDrawData = ContextManager.GetNetControl().GetServerDrawData(ContextIndex))
+		{
+			UpdateDrawData(NetDrawData.Get());
+		}
+
 		UpdateDrawData(ImGui::GetDrawData());
 
 		bIsFrameStarted = false;
@@ -240,17 +279,14 @@ void FImGuiContextProxy::UpdateDrawData(ImDrawData* DrawData)
 {
 	if (DrawData && DrawData->CmdListsCount > 0)
 	{
-		DrawLists.SetNum(DrawData->CmdListsCount, false);
+		const int StartIndex = DrawLists.Num();
+
+		DrawLists.SetNum(DrawLists.Num() + DrawData->CmdListsCount, EAllowShrinking::No);
 
 		for (int Index = 0; Index < DrawData->CmdListsCount; Index++)
 		{
-			DrawLists[Index].TransferDrawData(*DrawData->CmdLists[Index]);
+			DrawLists[StartIndex + Index].TransferDrawData(*DrawData->CmdLists[Index]);
 		}
-	}
-	else
-	{
-		// If we are not rendering then this might be a good moment to empty the array.
-		DrawLists.Empty();
 	}
 }
 

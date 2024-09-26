@@ -4,6 +4,7 @@
 
 #include "ImGuiContextProxy.h"
 #include "VersionCompatibility.h"
+#include "ImGuiNetControl.h"
 
 
 class FImGuiModuleSettings;
@@ -34,6 +35,8 @@ public:
 
 	ImFontAtlas& GetFontAtlas() { return FontAtlas; }
 	const ImFontAtlas& GetFontAtlas() const { return FontAtlas; }
+
+	FImGuiNetControl& GetNetControl() { return NetControl; }
 
 #if WITH_EDITOR
 	// Get or create editor ImGui context proxy.
@@ -107,6 +110,8 @@ private:
 	void BuildFontAtlas(const TMap<FName, TSharedPtr<ImFontConfig>>& CustomFontConfigs = {});
 
 	TMap<int32, FContextData> Contexts;
+
+	FImGuiNetControl NetControl;
 
 	ImFontAtlas FontAtlas;
 	TArray<TUniquePtr<ImFontAtlas>> FontResourcesToRelease;

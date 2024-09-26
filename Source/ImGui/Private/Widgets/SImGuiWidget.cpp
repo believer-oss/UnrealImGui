@@ -24,7 +24,6 @@
 
 #include <utility>
 
-
 #if IMGUI_WIDGET_DEBUG
 
 DEFINE_LOG_CATEGORY_STATIC(LogImGuiWidget, Warning, All);
@@ -87,17 +86,20 @@ void SImGuiWidget::Construct(const FArguments& InArgs)
 
 	ModuleManager = InArgs._ModuleManager;
 	GameViewport = InArgs._GameViewport;
-	ContextIndex = InArgs._ContextIndex;
+	ContextIndexes = InArgs._ContextIndexes;
 
 	// Register to get post-update notifications.
 	ModuleManager->OnPostImGuiUpdate().AddRaw(this, &SImGuiWidget::OnPostImGuiUpdate);
 
 	// Register debug delegate.
-	auto* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex);
-	checkf(ContextProxy, TEXT("Missing context during widget construction: ContextIndex = %d"), ContextIndex);
+	for (int32 ContextIndex : ContextIndexes)
+	{
+		auto* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex);
+		checkf(ContextProxy, TEXT("Missing context during widget construction: ContextIndex = %d"), ContextIndex);
 #if IMGUI_WIDGET_DEBUG
-	ContextProxy->OnDraw().AddRaw(this, &SImGuiWidget::OnDebugDraw);
+		ContextProxy->OnDraw().AddRaw(this, &SImGuiWidget::OnDebugDraw);
 #endif // IMGUI_WIDGET_DEBUG
+	}
 
 	// Register for settings change.
 	RegisterImGuiSettingsDelegates();
@@ -131,12 +133,15 @@ SImGuiWidget::~SImGuiWidget()
 	ReleaseInputHandler();
 
 	// Remove binding between this widget and its context proxy.
-	if (auto* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex))
+	for (int32 ContextIndex : ContextIndexes)
 	{
+		if (auto* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex))
+		{
 #if IMGUI_WIDGET_DEBUG
-		ContextProxy->OnDraw().RemoveAll(this);
+			ContextProxy->OnDraw().RemoveAll(this);
 #endif // IMGUI_WIDGET_DEBUG
-	}
+		}
+}
 
 	// Unregister from post-update notifications.
 	ModuleManager->OnPostImGuiUpdate().RemoveAll(this);
@@ -154,34 +159,55 @@ void SImGuiWidget::Tick(const FGeometry& AllottedGeometry, const double InCurren
 
 FReply SImGuiWidget::OnKeyChar(const FGeometry& MyGeometry, const FCharacterEvent& CharacterEvent)
 {
-	return InputHandler->OnKeyChar(CharacterEvent);
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnKeyChar(CharacterEvent);
+	});
 }
 
 FReply SImGuiWidget::OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& KeyEvent)
 {
 	UpdateCanvasControlMode(KeyEvent);
-	return InputHandler->OnKeyDown(KeyEvent);
+
+	// With shared input we can leave command bindings for DebugExec to handle, otherwise we need to do it outside the
+	// input handler, since if there are multiple handlers it will toggle multiple times.
+	const bool bCanToggleInput = !ModuleManager->GetProperties().IsKeyboardInputShared();
+	if (bCanToggleInput && UImGuiInputHandler::IsToggleInputEvent(KeyEvent, ModuleManager))
+	{
+		ModuleManager->GetProperties().ToggleInput();
+	}
+
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnKeyDown(KeyEvent);
+	});
 }
 
 FReply SImGuiWidget::OnKeyUp(const FGeometry& MyGeometry, const FKeyEvent& KeyEvent)
 {
 	UpdateCanvasControlMode(KeyEvent);
-	return InputHandler->OnKeyUp(KeyEvent);
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnKeyUp(KeyEvent);
+	});
 }
 
 FReply SImGuiWidget::OnAnalogValueChanged(const FGeometry& MyGeometry, const FAnalogInputEvent& AnalogInputEvent)
 {
-	return InputHandler->OnAnalogValueChanged(AnalogInputEvent);
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnAnalogValueChanged(AnalogInputEvent);
+	});
 }
 
 FReply SImGuiWidget::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	return InputHandler->OnMouseButtonDown(MouseEvent).LockMouseToWidget(SharedThis(this));
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnMouseButtonDown(MouseEvent).LockMouseToWidget(SharedThis(this));
+	});
 }
 
 FReply SImGuiWidget::OnMouseButtonDoubleClick(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	return InputHandler->OnMouseButtonDoubleClick(MouseEvent).LockMouseToWidget(SharedThis(this));
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnMouseButtonDoubleClick(MouseEvent).LockMouseToWidget(SharedThis(this));
+	});
 }
 
 namespace
@@ -199,33 +225,42 @@ namespace
 
 FReply SImGuiWidget::OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	FReply Reply = InputHandler->OnMouseButtonUp(MouseEvent);
-	if (!NeedMouseLock(MouseEvent))
-	{
-		Reply.ReleaseMouseLock();
-	}
-	return Reply;
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		FReply Reply = InputHandler.OnMouseButtonUp(MouseEvent);
+		if (!NeedMouseLock(MouseEvent))
+		{
+			Reply.ReleaseMouseLock();
+		}
+		return Reply;
+	});
 }
 
 FReply SImGuiWidget::OnMouseWheel(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	return InputHandler->OnMouseWheel(MouseEvent);
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnMouseWheel(MouseEvent);
+	});
 }
 
 FReply SImGuiWidget::OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-	return InputHandler->OnMouseMove(TransformScreenPointToImGui(MyGeometry, MouseEvent.GetScreenSpacePosition()), MouseEvent);
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnMouseMove(TransformScreenPointToImGui(MyGeometry, MouseEvent.GetScreenSpacePosition()), MouseEvent);
+	});
 }
 
 FReply SImGuiWidget::OnFocusReceived(const FGeometry& MyGeometry, const FFocusEvent& FocusEvent)
 {
 	Super::OnFocusReceived(MyGeometry, FocusEvent);
 
-	IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget %d - Focus Received."), ContextIndex);
+	IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget - Focus Received."));
 
 	bForegroundWindow = GameViewport->Viewport->IsForegroundWindow();
-	InputHandler->OnKeyboardInputEnabled();
-	InputHandler->OnGamepadInputEnabled();
+	for (const TWeakObjectPtr<UImGuiInputHandler>& InputHandlerPtr : InputHandlers)
+	{
+		InputHandlerPtr->OnKeyboardInputEnabled();
+		InputHandlerPtr->OnGamepadInputEnabled();
+	}
 
 	FSlateApplication::Get().ResetToDefaultPointerInputSettings();
 	return FReply::Handled();
@@ -235,62 +270,129 @@ void SImGuiWidget::OnFocusLost(const FFocusEvent& FocusEvent)
 {
 	Super::OnFocusLost(FocusEvent);
 
-	IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget %d - Focus Lost."), ContextIndex);
+	IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget - Focus Lost."));
 
-	InputHandler->OnKeyboardInputDisabled();
-	InputHandler->OnGamepadInputDisabled();
+	for (const TWeakObjectPtr<UImGuiInputHandler>& InputHandlerPtr : InputHandlers)
+	{
+		InputHandlerPtr->OnKeyboardInputDisabled();
+		InputHandlerPtr->OnGamepadInputDisabled();
+	}
 }
 
 void SImGuiWidget::OnMouseEnter(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
 	Super::OnMouseEnter(MyGeometry, MouseEvent);
 
-	IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget %d - Mouse Enter."), ContextIndex);
+	IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget - Mouse Enter."));
 
-	InputHandler->OnMouseInputEnabled();
+	for (const TWeakObjectPtr<UImGuiInputHandler>& InputHandlerPtr : InputHandlers)
+	{
+		InputHandlerPtr->OnMouseInputEnabled();
+	}
 }
 
 void SImGuiWidget::OnMouseLeave(const FPointerEvent& MouseEvent)
 {
 	Super::OnMouseLeave(MouseEvent);
 
-	IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget %d - Mouse Leave."), ContextIndex);
+	IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget - Mouse Leave."));
 
-	InputHandler->OnMouseInputDisabled();
+	for (const TWeakObjectPtr<UImGuiInputHandler>& InputHandlerPtr : InputHandlers)
+	{
+		InputHandlerPtr->OnMouseInputDisabled();
+	}
 }
 
 FReply SImGuiWidget::OnTouchStarted(const FGeometry& MyGeometry, const FPointerEvent& TouchEvent)
 {
-	return InputHandler->OnTouchStarted(TransformScreenPointToImGui(MyGeometry, TouchEvent.GetScreenSpacePosition()), TouchEvent);
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnTouchStarted(TransformScreenPointToImGui(MyGeometry, TouchEvent.GetScreenSpacePosition()), TouchEvent);
+	});
 }
 
 FReply SImGuiWidget::OnTouchMoved(const FGeometry& MyGeometry, const FPointerEvent& TouchEvent)
 {
-	return InputHandler->OnTouchMoved(TransformScreenPointToImGui(MyGeometry, TouchEvent.GetScreenSpacePosition()), TouchEvent);
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnTouchMoved(TransformScreenPointToImGui(MyGeometry, TouchEvent.GetScreenSpacePosition()), TouchEvent);
+	});
 }
 
 FReply SImGuiWidget::OnTouchEnded(const FGeometry& MyGeometry, const FPointerEvent& TouchEvent)
 {
 	UpdateVisibility();
-	return InputHandler->OnTouchEnded(TransformScreenPointToImGui(MyGeometry, TouchEvent.GetScreenSpacePosition()), TouchEvent);
+	return HandleInputEvent([&](UImGuiInputHandler& InputHandler){
+		return InputHandler.OnTouchEnded(TransformScreenPointToImGui(MyGeometry, TouchEvent.GetScreenSpacePosition()), TouchEvent);
+	});
 }
 
 void SImGuiWidget::CreateInputHandler(const FSoftClassPath& HandlerClassReference)
 {
 	ReleaseInputHandler();
 
-	if (!InputHandler.IsValid())
+	if (InputHandlers.IsEmpty())
 	{
-		InputHandler = FImGuiInputHandlerFactory::NewHandler(HandlerClassReference, ModuleManager, GameViewport.Get(), ContextIndex);
+		for (int32 ContextIndex : ContextIndexes)
+		{
+			InputHandlers.Emplace(FImGuiInputHandlerFactory::NewHandler(HandlerClassReference, ModuleManager, GameViewport.Get(), ContextIndex));
+		}
 	}
 }
 
 void SImGuiWidget::ReleaseInputHandler()
 {
-	if (InputHandler.IsValid())
+	for (TWeakObjectPtr<UImGuiInputHandler> InputHandler : InputHandlers)
 	{
 		FImGuiInputHandlerFactory::ReleaseHandler(InputHandler.Get());
-		InputHandler.Reset();
+	}
+	InputHandlers.Reset();
+}
+
+FReply SImGuiWidget::HandleInputEvent(std::function<FReply(UImGuiInputHandler& InputHandler)> Predicate)
+{
+	UImGuiInputHandler* ActiveHandler = nullptr;
+	for (const TWeakObjectPtr<UImGuiInputHandler>& InputHandlerPtr : InputHandlers)
+	{
+		if (UImGuiInputHandler* InputHandler = InputHandlerPtr.Get())
+		{
+			if (InputHandler->HasImGuiHoveredAnyWindow() && InputHandler->HasImGuiActiveItem())
+			{
+				ActiveHandler = InputHandler;
+				break;
+			}
+		}
+	}
+
+	if (ActiveHandler == nullptr)
+	{
+		for (const TWeakObjectPtr<UImGuiInputHandler>& InputHandlerPtr : InputHandlers)
+		{
+			if (UImGuiInputHandler* InputHandler = InputHandlerPtr.Get())
+			{
+				if (InputHandler->HasImGuiHoveredAnyWindow())
+				{
+					ActiveHandler = InputHandler;
+					break;
+				}
+			}
+		}
+	}
+
+	if (ActiveHandler)
+	{
+		return Predicate(*ActiveHandler);
+	}
+	else
+	{
+		FReply Reply = FReply::Unhandled();
+		for (const TWeakObjectPtr<UImGuiInputHandler>& InputHandlerPtr : InputHandlers)
+		{
+			if (UImGuiInputHandler* InputHandler = InputHandlerPtr.Get())
+			{
+				Reply = Predicate(*InputHandler);
+			}
+		}
+
+		return Reply;
 	}
 }
 
@@ -346,16 +448,26 @@ void SImGuiWidget::UpdateVisibility()
 	// mode (hit-test invisible).
 	SetVisibility(bInputEnabled && !bTransparentMouseInput ? EVisibility::Visible : EVisibility::HitTestInvisible);
 
-	IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget %d - Visibility updated to '%s'."),
-		ContextIndex, *GetVisibility().ToString());
+	IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget - Visibility updated to '%s'."),
+		*GetVisibility().ToString());
 }
 
 void SImGuiWidget::UpdateMouseCursor()
 {
 	if (!bHideMouseCursor)
 	{
-		const FImGuiContextProxy* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex);
-		SetCursor(ContextProxy ? ContextProxy->GetMouseCursor() : EMouseCursor::Default);
+		EMouseCursor::Type CursorType = EMouseCursor::Default;
+		for (int32 ContextIndex : ContextIndexes)
+		{
+			const FImGuiContextProxy* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex);
+			EMouseCursor::Type ProxyCursor = ContextProxy ? ContextProxy->GetMouseCursor() : EMouseCursor::Default;
+			if (ProxyCursor != EMouseCursor::Default)
+			{
+				CursorType = ProxyCursor;
+			}
+		}
+
+		SetCursor(CursorType);
 	}
 	else
 	{
@@ -425,13 +537,19 @@ void SImGuiWidget::ReturnFocus()
 void SImGuiWidget::UpdateInputState()
 {
 	auto& Properties = ModuleManager->GetProperties();
-	auto* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex);
+
+	bool bAnyProxyNeedsMouse = false;
+	for (int32 ContextIndex : ContextIndexes)
+	{
+		FImGuiContextProxy* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex);
+		bAnyProxyNeedsMouse |= ContextProxy->WantsMouseCapture() || ContextProxy->HasActiveItem();
+	}
 
 	const bool bEnableTransparentMouseInput = Properties.IsMouseInputShared()
 #if PLATFORM_ANDROID || PLATFORM_IOS
 		&& (FSlateApplication::Get().GetCursorPos() != FVector2D::ZeroVector)
 #endif
-		&& !(ContextProxy->WantsMouseCapture() || ContextProxy->HasActiveItem());
+		&& !bAnyProxyNeedsMouse;
 	if (bTransparentMouseInput != bEnableTransparentMouseInput)
 	{
 		bTransparentMouseInput = bEnableTransparentMouseInput;
@@ -444,8 +562,8 @@ void SImGuiWidget::UpdateInputState()
 	const bool bPropertiesInputEnabled = Properties.IsInputEnabled();
 	if (bInputEnabled != bPropertiesInputEnabled)
 	{
-		IMGUI_WIDGET_LOG(Log, TEXT("ImGui Widget %d - Input Enabled changed to '%s'."),
-			ContextIndex, TEXT_BOOL(bPropertiesInputEnabled));
+		IMGUI_WIDGET_LOG(Log, TEXT("ImGui Widget - Input Enabled changed to '%s'."),
+			TEXT_BOOL(bPropertiesInputEnabled));
 
 		bInputEnabled = bPropertiesInputEnabled;
 
@@ -457,7 +575,10 @@ void SImGuiWidget::UpdateInputState()
 			// We won't get mouse enter, if viewport is already hovered.
 			if (GameViewport->GetGameViewportWidget()->IsHovered())
 			{
-				InputHandler->OnMouseInputEnabled();
+				for (const TWeakObjectPtr<UImGuiInputHandler>& InputHandlerPtr : InputHandlers)
+				{
+					InputHandlerPtr->OnMouseInputEnabled();
+				}
 			}
 
 			TakeFocus();
@@ -500,7 +621,10 @@ void SImGuiWidget::UpdateTransparentMouseInput(const FGeometry& AllottedGeometry
 	{
 		if (!GameViewport->GetGameViewportWidget()->HasMouseCapture())
 		{
-			InputHandler->OnMouseMove(TransformScreenPointToImGui(AllottedGeometry, FSlateApplication::Get().GetCursorPos()));
+			for (const TWeakObjectPtr<UImGuiInputHandler>& InputHandlerPtr : InputHandlers)
+			{
+				InputHandlerPtr->OnMouseMove(TransformScreenPointToImGui(AllottedGeometry, FSlateApplication::Get().GetCursorPos()));
+			}
 		}
 	}
 }
@@ -515,18 +639,21 @@ void SImGuiWidget::HandleWindowFocusLost()
 		{
 			bForegroundWindow = !bForegroundWindow;
 
-			IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget %d - Updating input after %s foreground window status."),
-				ContextIndex, bForegroundWindow ? TEXT("getting") : TEXT("losing"));
+			IMGUI_WIDGET_LOG(VeryVerbose, TEXT("ImGui Widget - Updating input after %s foreground window status."),
+				bForegroundWindow ? TEXT("getting") : TEXT("losing"));
 
-			if (bForegroundWindow)
+			for (const TWeakObjectPtr<UImGuiInputHandler>& InputHandlerPtr : InputHandlers)
 			{
-				InputHandler->OnKeyboardInputEnabled();
-				InputHandler->OnGamepadInputEnabled();
-			}
-			else
-			{
-				InputHandler->OnKeyboardInputDisabled();
-				InputHandler->OnGamepadInputDisabled();
+				if (bForegroundWindow)
+				{
+					InputHandlerPtr->OnKeyboardInputEnabled();
+					InputHandlerPtr->OnGamepadInputEnabled();
+				}
+				else
+				{
+					InputHandlerPtr->OnKeyboardInputDisabled();
+					InputHandlerPtr->OnGamepadInputDisabled();
+				}
 			}
 		}
 	}
@@ -580,26 +707,29 @@ void SImGuiWidget::UpdateCanvasSize()
 {
 	if (bUpdateCanvasSize)
 	{
-		if (auto* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex))
+		CanvasSize = MinCanvasSize;
+		if (bAdaptiveCanvasSize && GameViewport.IsValid())
 		{
-			CanvasSize = MinCanvasSize;
-			if (bAdaptiveCanvasSize && GameViewport.IsValid())
-			{
-				FVector2D ViewportSize;
-				GameViewport->GetViewportSize(ViewportSize);
-				CanvasSize = MaxVector(CanvasSize, ViewportSize);
-			}
-			else
-			{
-				// No need for more updates, if we successfully processed fixed-canvas size.
-				bUpdateCanvasSize = false;
-			}
+			FVector2D ViewportSize;
+			GameViewport->GetViewportSize(ViewportSize);
+			CanvasSize = MaxVector(CanvasSize, ViewportSize);
+		}
+		else
+		{
+			// No need for more updates, if we successfully processed fixed-canvas size.
+			bUpdateCanvasSize = false;
+		}
 
-			// Clamping DPI Scale to keep the canvas size from getting too big.
-			CanvasSize /= FMath::Max(DPIScale, 0.01f);
-			CanvasSize = RoundVector(CanvasSize);
+		// Clamping DPI Scale to keep the canvas size from getting too big.
+		CanvasSize /= FMath::Max(DPIScale, 0.01f);
+		CanvasSize = RoundVector(CanvasSize);
 
-			ContextProxy->SetDisplaySize(CanvasSize);
+		for (int32 ContextIndex : ContextIndexes)
+		{
+			if (FImGuiContextProxy* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex))
+			{
+				ContextProxy->SetDisplaySize(CanvasSize);
+			}
 		}
 	}
 }
@@ -627,60 +757,78 @@ FVector2D SImGuiWidget::TransformScreenPointToImGui(const FGeometry& MyGeometry,
 int32 SImGuiWidget::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyClippingRect,
 	FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& WidgetStyle, bool bParentEnabled) const
 {
-	if (FImGuiContextProxy* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex))
+	// iterate this in reverse order so the input priority matches draw order
+	for (int32 i = ContextIndexes.Num() - 1; i >= 0; --i)
 	{
-		// Manually update ImGui context to minimise lag between creating and rendering ImGui output. This will also
-		// keep frame tearing at minimum because it is executed at the very end of the frame.
-		ContextProxy->Tick(FSlateApplication::Get().GetDeltaTime());
+		const int32 ContextIndex = ContextIndexes[i];
 
-		// Calculate transform from ImGui to screen space. Rounding translation is necessary to keep it pixel-perfect
-		// in older engine versions.
-		const FSlateRenderTransform& WidgetToScreen = AllottedGeometry.GetAccumulatedRenderTransform();
-		const FSlateRenderTransform ImGuiToScreen = RoundTranslation(ImGuiRenderTransform.Concatenate(WidgetToScreen));
+		FImGuiContextManager& ContextManager = ModuleManager->GetContextManager();
+		bool bContextHasNetConnection = ContextManager.GetNetControl().IsConnected(ContextIndex);
+		FImGuiContextProxy* ContextProxy = ContextManager.GetContextProxy(ContextIndex);
 
-#if ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
-		// Convert clipping rectangle to format required by Slate vertex.
-		const FSlateRotatedRect VertexClippingRect{ MyClippingRect };
-#endif // ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
-
-		for (const auto& DrawList : ContextProxy->GetDrawData())
+		if (!bContextHasNetConnection && ContextProxy)
 		{
+			// Manually update ImGui context to minimise lag between creating and rendering ImGui output. This will also
+			// keep frame tearing at minimum because it is executed at the very end of the frame.
+			// ContextProxy->Tick(FSlateApplication::Get().GetDeltaTime(), ContextManager);
+
+			// Calculate transform from ImGui to screen space. Rounding translation is necessary to keep it pixel-perfect
+			// in older engine versions.
+			const FSlateRenderTransform& WidgetToScreen = AllottedGeometry.GetAccumulatedRenderTransform();
+			const FSlateRenderTransform ImGuiToScreen = RoundTranslation(ImGuiRenderTransform.Concatenate(WidgetToScreen));
+
 #if ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
-			DrawList.CopyVertexData(VertexBuffer, ImGuiToScreen, VertexClippingRect);
-#else
-			DrawList.CopyVertexData(VertexBuffer, ImGuiToScreen);
+			// Convert clipping rectangle to format required by Slate vertex.
+			const FSlateRotatedRect VertexClippingRect{ MyClippingRect };
 #endif // ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
 
-			int IndexBufferOffset = 0;
-			for (int CommandNb = 0; CommandNb < DrawList.NumCommands(); CommandNb++)
+			for (const auto& DrawList : ContextProxy->GetDrawData())
 			{
-				const auto& DrawCommand = DrawList.GetCommand(CommandNb, ImGuiToScreen);
-
-				DrawList.CopyIndexData(IndexBuffer, IndexBufferOffset, DrawCommand.NumElements);
-
-				// Advance offset by number of copied elements to position it for the next command.
-				IndexBufferOffset += DrawCommand.NumElements;
-
-				// Get texture resource handle for this draw command (null index will be also mapped to a valid texture).
-				const FSlateResourceHandle& Handle = ModuleManager->GetTextureManager().GetTextureHandle(DrawCommand.TextureId);
-
-				// Transform clipping rectangle to screen space and apply to elements that we draw.
-				const FSlateRect ClippingRect = DrawCommand.ClippingRect.IntersectionWith(MyClippingRect);
-
 #if ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
-				// Get access to the Slate scissor rectangle defined in Slate Core API, so we can customize elements drawing.
-				extern SLATECORE_API TOptional<FShortRect> GSlateScissorRect;
-				TGuardValue<TOptional<FShortRect>> GSlateScissorRecGuard(GSlateScissorRect, FShortRect{ ClippingRect });
+				DrawList.CopyVertexData(VertexBuffer, ImGuiToScreen, VertexClippingRect);
 #else
-				OutDrawElements.PushClip(FSlateClippingZone{ ClippingRect });
+				DrawList.CopyVertexData(VertexBuffer, ImGuiToScreen);
 #endif // ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
 
-				// Add elements to the list.
-				FSlateDrawElement::MakeCustomVerts(OutDrawElements, LayerId, Handle, VertexBuffer, IndexBuffer, nullptr, 0, 0);
+				int IndexBufferOffset = 0;
+				uint32 LastVertexOffset = INDEX_NONE;
+				TArray<FSlateVertex> OffsetVertexBuffer; // Can't use TArrayView because FSlateDrawElement::MakeCustomVerts() takes a const TArray<>&
+				for (int CommandNb = 0; CommandNb < DrawList.NumCommands(); CommandNb++)
+				{
+					const FImGuiDrawCommand& DrawCommand = DrawList.GetCommand(CommandNb, ImGuiToScreen);
+
+					DrawList.CopyIndexData(IndexBuffer, IndexBufferOffset, DrawCommand.NumElements);
+
+					if (LastVertexOffset != DrawCommand.VertexOffset)
+					{
+						auto VertexBufferSlice = TArrayView<FSlateVertex>(VertexBuffer.GetData() + DrawCommand.VertexOffset, VertexBuffer.Num() - DrawCommand.VertexOffset);
+						OffsetVertexBuffer = TArray<FSlateVertex>(VertexBufferSlice);
+					}
+
+					// Advance offset by number of copied elements to position it for the next command.
+					IndexBufferOffset += DrawCommand.NumElements;
+
+					// Get texture resource handle for this draw command (null index will be also mapped to a valid texture).
+					const FSlateResourceHandle& Handle = ModuleManager->GetTextureManager().GetTextureHandle(DrawCommand.TextureId);
+
+					// Transform clipping rectangle to screen space and apply to elements that we draw.
+					const FSlateRect ClippingRect = DrawCommand.ClippingRect.IntersectionWith(MyClippingRect);
+
+#if ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
+					// Get access to the Slate scissor rectangle defined in Slate Core API, so we can customize elements drawing.
+					extern SLATECORE_API TOptional<FShortRect> GSlateScissorRect;
+					TGuardValue<TOptional<FShortRect>> GSlateScissorRecGuard(GSlateScissorRect, FShortRect{ ClippingRect });
+#else
+					OutDrawElements.PushClip(FSlateClippingZone{ ClippingRect });
+#endif // ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
+
+					// Add elements to the list.
+					FSlateDrawElement::MakeCustomVerts(OutDrawElements, LayerId, Handle, OffsetVertexBuffer, IndexBuffer, nullptr, 0, 0);
 
 #if !ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
-				OutDrawElements.PopClip();
+					OutDrawElements.PopClip();
 #endif // ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
+				}
 			}
 		}
 	}

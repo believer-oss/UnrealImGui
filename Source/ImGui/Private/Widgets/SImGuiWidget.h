@@ -10,6 +10,7 @@
 #include <Widgets/DeclarativeSyntaxSupport.h>
 #include <Widgets/SCompoundWidget.h>
 
+#include <functional>
 
 // Hide ImGui Widget debug in non-developer mode.
 #define IMGUI_WIDGET_DEBUG IMGUI_MODULE_DEVELOPER
@@ -32,15 +33,12 @@ public:
 	{}
 	SLATE_ARGUMENT(FImGuiModuleManager*, ModuleManager)
 	SLATE_ARGUMENT(UGameViewportClient*, GameViewport)
-	SLATE_ARGUMENT(int32, ContextIndex)
+	SLATE_ARGUMENT(TArray<int32>, ContextIndexes)
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
 
 	~SImGuiWidget();
-
-	// Get index of the context that this widget is targeting.
-	int32 GetContextIndex() const { return ContextIndex; }
 
 	//----------------------------------------------------------------------------------------------------
 	// SWidget overrides
@@ -86,6 +84,7 @@ private:
 
 	void CreateInputHandler(const FSoftClassPath& HandlerClassReference);
 	void ReleaseInputHandler();
+	FReply HandleInputEvent(std::function<FReply(UImGuiInputHandler& InputHandler)> Predicate);
 
 	void RegisterImGuiSettingsDelegates();
 	void UnregisterImGuiSettingsDelegates();
@@ -132,7 +131,6 @@ private:
 
 	FImGuiModuleManager* ModuleManager = nullptr;
 	TWeakObjectPtr<UGameViewportClient> GameViewport;
-	TWeakObjectPtr<UImGuiInputHandler> InputHandler;
 
 	FSlateRenderTransform ImGuiTransform;
 	FSlateRenderTransform ImGuiRenderTransform;
@@ -140,7 +138,8 @@ private:
 	mutable TArray<FSlateVertex> VertexBuffer;
 	mutable TArray<SlateIndex> IndexBuffer;
 
-	int32 ContextIndex = 0;
+	TArray<int32> ContextIndexes;
+	TArray<TWeakObjectPtr<UImGuiInputHandler>> InputHandlers;
 
 	FVector2D MinCanvasSize = FVector2D::ZeroVector;
 	FVector2D CanvasSize = FVector2D::ZeroVector;

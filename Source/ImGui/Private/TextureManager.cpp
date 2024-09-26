@@ -1,12 +1,13 @@
 // Distributed under the MIT License (MIT) (see accompanying LICENSE file)
 
 #include "TextureManager.h"
-#include "RHITypes.h"
 #include <Engine/Texture2D.h>
 #include <Framework/Application/SlateApplication.h>
 
 #include <algorithm>
 
+class UTexture;
+class UTexture2D;
 
 void FTextureManager::InitializeErrorTexture(const FColor& Color)
 {
@@ -68,7 +69,18 @@ TextureIndex FTextureManager::CreateTextureInternal(const FName& Name, int32 Wid
 	}
 	else
 	{
-		return AddTextureEntry(Name, Texture, true);
+		TextureIndex texIndex = AddTextureEntry(Name, Texture, true);
+		
+		// TODO only do this if we're running on the game server
+		// NetImgui::eTexFormat eFmt = SrcBpp == 1 ? NetImgui::eTexFormat::kTexFmtA8 :
+		// 							SrcBpp == 4 ? NetImgui::eTexFormat::kTexFmtRGBA8 :
+		// 							NetImgui::eTexFormat::kTexFmt_Invalid;
+		// if (texIndex != INDEX_NONE && eFmt != NetImgui::eTexFormat::kTexFmt_Invalid)
+		// {
+		// 	NetImgui::SendDataTexture(ImGuiInterops::ToImTextureID(texIndex), SrcData, Width, Height, eFmt);
+		// }
+
+		return texIndex;
 	}
 }
 

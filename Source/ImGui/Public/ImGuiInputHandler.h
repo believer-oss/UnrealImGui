@@ -132,6 +132,21 @@ public:
 	/** Called to handle deactivation of the mouse input. */
 	virtual void OnMouseInputDisabled();
 
+	/**
+	 * Checks whether corresponding ImGui context has an active item (holding cursor focus).
+	 * @returns True, if corresponding context has an active item.
+	 */
+	bool HasImGuiActiveItem() const;
+
+	bool HasImGuiHoveredAnyWindow() const;
+
+	/**
+	 * Checks whether this key event can toggle ImGui input (as defined in settings).
+	 * @param KeyEvent - Key event to test.
+	 * @returns True, if this key is bound to 'ImGui.ToggleInput' command that switches ImGui input mode.
+	 */
+	static bool IsToggleInputEvent(const FKeyEvent& KeyEvent, FImGuiModuleManager* ModuleManager);
+
 protected:
 
 	/** Copy state of modifier keys to input state. */
@@ -152,19 +167,6 @@ protected:
 	 */
 	bool IsStopPlaySessionEvent(const FKeyEvent& KeyEvent) const;
 #endif
-
-	/**
-	 * Checks whether this key event can toggle ImGui input (as defined in settings).
-	 * @param KeyEvent - Key event to test.
-	 * @returns True, if this key is bound to 'ImGui.ToggleInput' command that switches ImGui input mode.
-	 */
-	bool IsToggleInputEvent(const FKeyEvent& KeyEvent) const;
-
-	/**
-	 * Checks whether corresponding ImGui context has an active item (holding cursor focus).
-	 * @returns True, if corresponding context has an active item.
-	 */
-	bool HasImGuiActiveItem() const;
 
 private:
 

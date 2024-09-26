@@ -33,6 +33,11 @@ struct EDelegateCategory
 
 FImGuiModuleManager* ImGuiModuleManager = nullptr;
 
+FImGuiModuleManager* FImGuiModuleManager::Get()
+{
+	return ImGuiModuleManager;
+}
+
 #if WITH_EDITOR
 static FImGuiEditor* ImGuiEditor = nullptr;
 #endif
@@ -214,6 +219,11 @@ const FImGuiModuleProperties& FImGuiModule::GetProperties() const
 	return ImGuiModuleManager->GetProperties();
 }
 
+FImGuiNetControl& FImGuiModule::GetNetControl()
+{
+	return ImGuiModuleManager->GetContextManager().GetNetControl();
+}
+
 bool FImGuiModule::IsInputMode() const
 {
 	return ImGuiModuleManager && ImGuiModuleManager->GetProperties().IsInputEnabled();
@@ -253,6 +263,50 @@ void FImGuiModule::ToggleShowDemo()
 	if (ImGuiModuleManager)
 	{
 		ImGuiModuleManager->GetProperties().ToggleDemo();
+	}
+}
+
+IImGuiModuleSettings* FImGuiModule::GetSettings()
+{
+	if (ImGuiModuleManager)
+	{
+		return &ImGuiModuleManager->GetSettings();
+	}
+
+	return nullptr;
+}
+
+void FImGuiModule::BuildInputToggleKeybindString(TAnsiStringBuilder<64>* StringBuilder)
+{
+	if (ImGuiModuleManager)
+	{
+		const FImGuiKeyInfo& ToggleKey = ImGuiModuleManager->GetSettings().GetToggleInputKey();
+
+		if (ToggleKey.Ctrl == ECheckBoxState::Checked)
+		{
+			StringBuilder->Append("Ctrl+");
+		}
+
+		if (ToggleKey.Alt == ECheckBoxState::Checked)
+		{
+			StringBuilder->Append("Alt+");
+		}
+
+		if (ToggleKey.Shift == ECheckBoxState::Checked)
+		{
+			StringBuilder->Append("Shift+");
+		}
+
+		if (ToggleKey.Cmd == ECheckBoxState::Checked)
+		{
+			StringBuilder->Append("Cmd+");
+		}
+
+		StringBuilder->Append(StringCast<char>(*ToggleKey.Key.GetFName().ToString()));
+	}
+	else
+	{
+		StringBuilder->Append("No imgui keybind available");
 	}
 }
 

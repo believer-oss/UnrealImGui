@@ -54,7 +54,7 @@ void SImGuiLayout::Construct(const FArguments& InArgs)
 					SNew(SImGuiWidget)
 					.ModuleManager(InArgs._ModuleManager)
 					.GameViewport(InArgs._GameViewport)
-					.ContextIndex(InArgs._ContextIndex)
+					.ContextIndexes(InArgs._ContextIndexes)
 #if !ENGINE_COMPATIBILITY_LEGACY_CLIPPING_API
 					// To correctly clip borders. Using SScissorRectBox in older versions seems to be not necessary.
 					.Clipping(EWidgetClipping::ClipToBounds)

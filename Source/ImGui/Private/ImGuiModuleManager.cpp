@@ -116,22 +116,36 @@ void FImGuiModuleManager::BuildFontAtlasTexture()
 
 void FImGuiModuleManager::RegisterTick()
 {
-	// Slate Post-Tick is a good moment to end and advance ImGui frame as it minimises a tearing.
-	if (!TickDelegateHandle.IsValid() && FSlateApplication::IsInitialized())
+	if (!IsTickRegistered())
 	{
-		TickDelegateHandle = FSlateApplication::Get().OnPostTick().AddRaw(this, &FImGuiModuleManager::Tick);
+		if (GUsingNullRHI)
+		{
+			auto Delegate = FTickerDelegate::CreateRaw(this, &FImGuiModuleManager::TickerTick);
+			TickerDelegateHandle = FTSTicker::GetCoreTicker().AddTicker(Delegate);
+		}
+		else if (FSlateApplication::IsInitialized())
+		{
+			// Slate Post-Tick is a good moment to end and advance ImGui frame as it minimises tearing.
+			SlateTickDelegateHandle = FSlateApplication::Get().OnPostTick().AddRaw(this, &FImGuiModuleManager::Tick);
+		}
 	}
 }
 
 void FImGuiModuleManager::UnregisterTick()
 {
-	if (TickDelegateHandle.IsValid())
+	if (SlateTickDelegateHandle.IsValid())
 	{
 		if (FSlateApplication::IsInitialized())
 		{
-			FSlateApplication::Get().OnPostTick().Remove(TickDelegateHandle);
+			FSlateApplication::Get().OnPostTick().Remove(SlateTickDelegateHandle);
 		}
-		TickDelegateHandle.Reset();
+		SlateTickDelegateHandle.Reset();
+	}
+
+	if (TickerDelegateHandle.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(TickerDelegateHandle);
+		TickerDelegateHandle.Reset();
 	}
 }
 
@@ -165,6 +179,12 @@ void FImGuiModuleManager::ReleaseTickInitializer()
 	}
 }
 
+bool FImGuiModuleManager::TickerTick(float DeltaSeconds)
+{
+	Tick(DeltaSeconds);
+	return true;
+}
+
 void FImGuiModuleManager::Tick(float DeltaSeconds)
 {
 	if (IsInGameThread())
@@ -190,6 +210,34 @@ void FImGuiModuleManager::AddWidgetToViewport(UGameViewportClient* GameViewport)
 	checkf(GameViewport, TEXT("Null game viewport."));
 	checkf(FSlateApplication::IsInitialized(), TEXT("Slate should be initialized before we can add widget to game viewports."));
 
+	// Make sure that textures are loaded before the first Slate widget is created.
+	LoadTextures();
+
+	// In PIE, there can be multiple worlds, each with their own context (i.e. server and client). If we're adding
+	// the widget to a viewport with a PIE world, assume we just need to display all the PIE worlds.
+	TArray<int32> ContextIndexes;
+	if (GameViewport->GetWorld()->WorldType == EWorldType::PIE)
+	{
+		for (const FWorldContext& WorldContext : GEngine->GetWorldContexts())
+		{
+			if (WorldContext.World()->WorldType == EWorldType::PIE)
+			{
+				int32 ContextIndex;
+				auto& ContextProxy = ContextManager.GetWorldContextProxy(*WorldContext.World(), ContextIndex);
+				ContextIndexes.Add(ContextIndex);
+			}
+		}
+	}
+	else
+	{
+		int32 ContextIndex;
+		auto& ContextProxy = ContextManager.GetWorldContextProxy(*GameViewport->GetWorld(), ContextIndex);
+		ContextIndexes.Add(ContextIndex);
+	}
+
+	checkf(GameViewport, TEXT("Null game viewport."));
+	checkf(FSlateApplication::IsInitialized(), TEXT("Slate should be initialized before we can add widget to game viewports."));
+
 	// Make sure that we have a context for this viewport's world and get its index.
 	int32 ContextIndex;
 	auto& ContextProxy = ContextManager.GetWorldContextProxy(*GameViewport->GetWorld(), ContextIndex);
@@ -199,7 +247,7 @@ void FImGuiModuleManager::AddWidgetToViewport(UGameViewportClient* GameViewport)
 
 	// Create and initialize the widget.
 	TSharedPtr<SImGuiLayout> SharedWidget;
-	SAssignNew(SharedWidget, SImGuiLayout).ModuleManager(this).GameViewport(GameViewport).ContextIndex(ContextIndex);
+	SAssignNew(SharedWidget, SImGuiLayout).ModuleManager(this).GameViewport(GameViewport).ContextIndexes(ContextIndexes);
 
 	GameViewport->AddViewportWidgetContent(SharedWidget.ToSharedRef(), IMGUI_WIDGET_Z_ORDER);
 

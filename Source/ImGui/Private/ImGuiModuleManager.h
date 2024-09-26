@@ -10,7 +10,6 @@
 #include "TextureManager.h"
 #include "Widgets/SImGuiLayout.h"
 
-
 // Central manager that implements module logic. It initializes and controls remaining module components.
 class FImGuiModuleManager
 {
@@ -19,10 +18,12 @@ class FImGuiModuleManager
 
 public:
 
+	static FImGuiModuleManager* Get();
+
 	// Get interface to module settings.
 	FImGuiModuleSettings& GetSettings() { return Settings; }
 
-	// Get interface to module state properties. 
+	// Get interface to module state properties.
 	FImGuiModuleProperties& GetProperties() { return Properties; }
 
 	// Get ImGui contexts manager.
@@ -50,13 +51,14 @@ private:
 	void LoadTextures();
 	void BuildFontAtlasTexture();
 
-	bool IsTickRegistered() { return TickDelegateHandle.IsValid(); }
+	bool IsTickRegistered() { return SlateTickDelegateHandle.IsValid() || TickerDelegateHandle.IsValid(); }
 	void RegisterTick();
 	void UnregisterTick();
 
 	void CreateTickInitializer();
 	void ReleaseTickInitializer();
 
+	bool TickerTick(float DeltaSeconds);
 	void Tick(float DeltaSeconds);
 
 	void OnViewportCreated();
@@ -78,7 +80,7 @@ private:
 	// ImGui settings proxy (valid in every loading stage).
 	FImGuiModuleSettings Settings;
 
-	// Widget that we add to all created contexts to draw ImGui demo. 
+	// Widget that we add to all created contexts to draw ImGui demo.
 	FImGuiDemo ImGuiDemo;
 
 	// Manager for ImGui contexts.
@@ -90,8 +92,10 @@ private:
 	// Slate widgets that we created.
 	TArray<TWeakPtr<SImGuiLayout>> Widgets;
 
+	FDelegateHandle SlateTickDelegateHandle;
+	FTSTicker::FDelegateHandle TickerDelegateHandle;
+
 	FDelegateHandle TickInitializerHandle;
-	FDelegateHandle TickDelegateHandle;
 	FDelegateHandle ViewportCreatedHandle;
 
 	bool bTexturesLoaded = false;

@@ -12,6 +12,7 @@ public class ImGui : ModuleRules
 	public ImGui(TargetInfo Target)
 #endif
 	{
+		OptimizeCode = CodeOptimization.InNonDebugBuilds;
 
 #if WITH_FORWARDED_MODULE_RULES_CTOR
 		bool bBuildEditor = Target.bBuildEditor;
@@ -34,43 +35,46 @@ public class ImGui : ModuleRules
 		PublicIncludePaths.AddRange(
 			new string[] {
 				Path.Combine(ModuleDirectory, "../ThirdParty/ImGuiLibrary/Include"),
-				// ... add public include paths required here ...
+				Path.Combine(ModuleDirectory, "../ThirdParty/NetImGuiLibrary/Client"),
+				Path.Combine(ModuleDirectory, "../ThirdParty/NetImGuiLibrary/Server"),
 			}
-			);
-
+		);
 
 		PrivateIncludePaths.AddRange(
 			new string[] {
 				"ImGui/Private",
 				"ThirdParty/ImGuiLibrary/Private",
-				// ... add other private include paths required here ...
+				"ThirdParty/NetImGuiLibrary/Client/Private",
 			}
-			);
-
+		);
 
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
 				"Core",
 				"Projects"
-				// ... add other public dependencies that you statically link with here ...
 			}
-			);
-
+		);
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"ApplicationCore",
 				"CoreUObject",
 				"EnhancedInput",
 				"Engine",
 				"InputCore",
+				"Sockets",
 				"Slate",
-				"SlateCore"
-				// ... add private dependencies that you statically link with here ...	
+				"SlateCore",
+				"RHI",
 			}
-			);
+		);
 
+		PublicDefinitions.Add("NETIMGUI_ENABLED=1");
+		PublicDefinitions.Add("NETIMGUI_POSIX_SOCKETS_ENABLED=0");
+		PublicDefinitions.Add("NETIMGUI_WINSOCKET_ENABLED=0");
+		PublicDefinitions.Add("JSON_NOEXCEPTION");
 
 		if (bBuildEditor)
 		{
@@ -81,21 +85,8 @@ public class ImGui : ModuleRules
 					"Settings",
 					"UnrealEd",
 				}
-				);
-		}
-
-
-		DynamicallyLoadedModuleNames.AddRange(
-			new string[]
-			{
-				// ... add any modules that your module loads dynamically here ...
-			}
 			);
-
-
-#if !UE_4_19_OR_LATER
-		List<string> PrivateDefinitions = Definitions;
-#endif
+		}
 
 		PrivateDefinitions.Add(string.Format("RUNTIME_LOADER_ENABLED={0}", bEnableRuntimeLoader ? 1 : 0));
 	}

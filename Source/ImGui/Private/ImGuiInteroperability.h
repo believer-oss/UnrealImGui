@@ -36,6 +36,9 @@ namespace ImGuiInterops
 	// Set in ImGui IO mapping to recognize indices generated from Unreal input events.
 	void SetUnrealKeyMap(ImGuiIO& IO);
 
+	// Setup IO clipboard functions to use UE platform-independent functions
+	void SetClipboardFunctions(ImGuiIO& IO);
+
 	// Map FKey to index in keys buffer.
 	uint32 GetKeyIndex(const FKey& Key);
 

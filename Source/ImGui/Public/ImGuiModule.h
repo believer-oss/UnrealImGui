@@ -5,11 +5,12 @@
 #include "ImGuiDelegates.h"
 #include "ImGuiModuleProperties.h"
 #include "ImGuiTextureHandle.h"
+#include "ImGuiModuleSettingsInterface.h"
+#include "ImGuiNetControl.h"
 
 #include <Modules/ModuleManager.h>
 
-
-class FImGuiModule : public IModuleInterface
+class IMGUI_API FImGuiModule : public IModuleInterface
 {
 public:
 
@@ -129,6 +130,11 @@ public:
 	virtual const FImGuiModuleProperties& GetProperties() const;
 
 	/**
+	 * Switch between local/remote net drawing contexts.
+	 */
+	FImGuiNetControl& GetNetControl();
+
+	/**
 	 * DEPRECIATED: Please use GetProperties() as this function is scheduled for removal.
 	 * Check whether Input Mode is enabled (tests ImGui.InputEnabled console variable).
 	 *
@@ -171,6 +177,17 @@ public:
 	 * Toggle ImGui Demo (changes ImGui.ShowDemo console variable).
 	 */
 	virtual void ToggleShowDemo();
+
+	/**
+	 * Builds a string representing the current input toggle keybind. For example, Shift+Alt+O
+	 */
+	void BuildInputToggleKeybindString(TAnsiStringBuilder<64>* StringBuilder);
+
+	/**
+	 * Gets the settings interface
+	 */
+	IImGuiModuleSettings* GetSettings();
+
 
 	/** IModuleInterface implementation */
 	virtual void StartupModule() override;

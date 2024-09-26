@@ -3,6 +3,7 @@
 #pragma once
 
 struct ImFontConfig;
+struct ImGuiStyle;
 
 /** Properties that define state of the ImGui module. */
 class IMGUI_API FImGuiModuleProperties
@@ -81,6 +82,12 @@ public:
 	/** Gets the map of registered custom fonts */
 	TMap<FName, TSharedPtr<ImFontConfig>>& GetCustomFonts() { return CustomFonts; }
 
+	/** Sets the default style */
+	void SetDefaultStyle(TSharedPtr<ImGuiStyle> InDefaultStyle) { DefaultStyle = InDefaultStyle; }
+
+	/** Gets the default style */
+	TSharedPtr<ImGuiStyle> GetDefaultStyle() { return DefaultStyle; }
+
 private:
 
 	bool bInputEnabled = false;
@@ -95,4 +102,6 @@ private:
 	bool bShowDemo = false;
 
 	TMap<FName, TSharedPtr<ImFontConfig>> CustomFonts;
+
+	TSharedPtr<ImGuiStyle> DefaultStyle;
 };

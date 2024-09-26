@@ -68,19 +68,12 @@ FReply UImGuiInputHandler::OnKeyDown(const FKeyEvent& KeyEvent)
 		}
 #endif // WITH_EDITOR
 
-		const bool bConsume = !ModuleManager->GetProperties().IsKeyboardInputShared();
-
-		// With shared input we can leave command bindings for DebugExec to handle, otherwise we need to do it here.
-		if (bConsume && IsToggleInputEvent(KeyEvent))
-		{
-			ModuleManager->GetProperties().ToggleInput();
-		}
-
 		InputState->SetKeyDown(KeyEvent, true);
 		CopyModifierKeys(KeyEvent);
 
 		InputState->KeyDownEvents.Add(KeyEvent.GetKeyCode(), KeyEvent);
 
+		const bool bConsume = !ModuleManager->GetProperties().IsKeyboardInputShared();
 		return ToReply(bConsume);
 	}
 }
@@ -136,7 +129,12 @@ FReply UImGuiInputHandler::OnMouseButtonDown(const FPointerEvent& MouseEvent)
 		if (Proxy)
 		{
 			//GEngine->AddOnScreenDebugMessage(15, 10, Proxy->WantsMouseCapture() ? FColor::Green : FColor::Red, TEXT("Handler Down"));
-			return ToReply(Proxy->WantsMouseCapture());
+
+			// Note: the original code checked if imgui wanted to do a mouse capture, but that led to a bug where 
+			// input would passthrough to the game briefly before being captured by imgui again. Simply always handling
+			// the input here yields the desired behavior of never giving up mouse capture as long as imgui input is on.
+			// return ToReply(Proxy->WantsMouseCapture());
+			return ToReply(true);
 		}
 	}
 	return ToReply(true);
@@ -296,7 +294,7 @@ namespace
 	}
 }
 
-bool UImGuiInputHandler::IsToggleInputEvent(const FKeyEvent& KeyEvent) const
+bool UImGuiInputHandler::IsToggleInputEvent(const FKeyEvent& KeyEvent, FImGuiModuleManager* ModuleManager)
 {
 	return IsMatchingEvent(KeyEvent, ModuleManager->GetSettings().GetToggleInputKey());
 }
@@ -305,6 +303,12 @@ bool UImGuiInputHandler::HasImGuiActiveItem() const
 {
 	FImGuiContextProxy* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex);
 	return ContextProxy && ContextProxy->HasActiveItem();
+}
+
+bool UImGuiInputHandler::HasImGuiHoveredAnyWindow() const
+{
+	FImGuiContextProxy* ContextProxy = ModuleManager->GetContextManager().GetContextProxy(ContextIndex);
+	return ContextProxy && ContextProxy->HasHoveredAnyWindow();
 }
 
 void UImGuiInputHandler::UpdateInputStatePointer()

@@ -8,9 +8,9 @@
 #include "ImGuiModule.h"
 #include "Utilities/WorldContext.h"
 #include "Utilities/WorldContextIndex.h"
+#include "Engine/Engine.h"
 
 #include <imgui.h>
-
 
 // TODO: Refactor ImGui Context Manager, to handle different types of worlds.
 
@@ -66,6 +66,8 @@ FImGuiContextManager::FImGuiContextManager(FImGuiModuleSettings& InSettings)
 	SetDPIScale(Settings.GetDPIScaleInfo());
 	BuildFontAtlas();
 
+	NetControl.Startup(this);
+
 	FWorldDelegates::OnWorldTickStart.AddRaw(this, &FImGuiContextManager::OnWorldTickStart);
 #if ENGINE_COMPATIBILITY_WITH_WORLD_POST_ACTOR_TICK
 	FWorldDelegates::OnWorldPostActorTick.AddRaw(this, &FImGuiContextManager::OnWorldPostActorTick);
@@ -81,24 +83,28 @@ FImGuiContextManager::~FImGuiContextManager()
 #if ENGINE_COMPATIBILITY_WITH_WORLD_POST_ACTOR_TICK
 	FWorldDelegates::OnWorldPostActorTick.RemoveAll(this);
 #endif
+
+	NetControl.Shutdown();
 }
 
 void FImGuiContextManager::Tick(float DeltaSeconds)
 {
 	// In editor, worlds can get invalid. We could remove corresponding entries, but that would mean resetting ImGui
 	// context every time when PIE session is restarted. Instead we freeze contexts until their worlds are re-created.
-
 	for (auto& Pair : Contexts)
 	{
 		auto& ContextData = Pair.Value;
 		if (ContextData.CanTick())
 		{
-			ContextData.ContextProxy->Tick(DeltaSeconds);
+			ContextData.ContextProxy->Tick(DeltaSeconds, *this);
 		}
 		else
 		{
+			int32 ContextIndex = Pair.Key;
+			NetControl.Disconnect(ContextIndex);
+
 			// Clear to make sure that we don't store objects registered for world that is no longer valid.
-			FImGuiDelegatesContainer::Get().OnWorldDebug(Pair.Key).Clear();
+			FImGuiDelegatesContainer::Get().OnWorldDebug(ContextIndex).Clear();
 		}
 	}
 
@@ -126,6 +132,12 @@ void FImGuiContextManager::OnWorldTickStart(UWorld* World, ELevelTick TickType, 
 
 		// Set as current, so we have right context ready when updating world objects.
 		ContextProxy.SetAsCurrent();
+
+		// Only game/PIE worlds should try to use netimgui
+		if (World->WorldType == EWorldType::Game || World->WorldType == EWorldType::PIE)
+		{
+			NetControl.OnWorldStartup(ContextProxy.GetContextIndex(), World);
+		}
 
 		ContextProxy.DrawEarlyDebug();
 #if !ENGINE_COMPATIBILITY_WITH_WORLD_POST_ACTOR_TICK
@@ -272,7 +284,9 @@ void FImGuiContextManager::BuildFontAtlas(const TMap<FName, TSharedPtr<ImFontCon
 			// Set font name for debugging
 			if (CustomFontConfig.IsValid())
 			{
-				strcpy_s(CustomFontConfig->Name, 40, TCHAR_TO_ANSI(*CustomFontName.ToString()));
+				constexpr size_t NameLength = UE_ARRAY_COUNT(CustomFontConfig->Name);
+				FPlatformString::Strncpy(CustomFontConfig->Name, TCHAR_TO_ANSI(*CustomFontName.ToString()), NameLength);
+				CustomFontConfig->Name[NameLength - 1] = 0;
 			}
 		
 			FontAtlas.AddFont(CustomFontConfig.Get());

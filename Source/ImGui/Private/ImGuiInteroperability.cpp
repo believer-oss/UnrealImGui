@@ -1,10 +1,10 @@
 // Distributed under the MIT License (MIT) (see accompanying LICENSE file)
 
 #include "ImGuiInteroperability.h"
-
 #include "ImGuiInputState.h"
-#include "Utilities/Arrays.h"
 
+#include "Utilities/Arrays.h"
+#include "HAL/PlatformApplicationMisc.h"
 
 // If TCHAR is wider than ImWchar, enable or disable validation of input character before conversions.
 #define VALIDATE_INPUT_CHARACTERS 1
@@ -189,6 +189,27 @@ namespace ImGuiInterops
 		UnrealToImGuiKeyMap.Add(EKeys::Divide,   ImGuiKey_KeypadDivide);
 	}
 
+    static const char* GetClipboardText(void* UserData)
+    {
+    	static TArray<UTF8CHAR> TextUtf8;
+
+		FString Clipboard;
+		FPlatformApplicationMisc::ClipboardPaste(Clipboard);
+    	TextUtf8 = StringToArray<UTF8CHAR>(TCHAR_TO_UTF8(*Clipboard));
+    	return reinterpret_cast<const char*>(TextUtf8.GetData());
+    }
+
+    static void SetClipboardText(void* UserData, const char* TextUtf8)
+    {
+    	FPlatformApplicationMisc::ClipboardCopy(UTF8_TO_TCHAR(TextUtf8));
+    }
+
+	void SetClipboardFunctions(ImGuiIO& IO)
+	{
+		IO.GetClipboardTextFn = GetClipboardText;
+		IO.SetClipboardTextFn = SetClipboardText;
+	}
+
 	// Simple transform mapping key codes to 0-511 range used in ImGui.
 	// From what I can tell, on most supported platforms key codes should comfortably fit in that range anyway
 	// but the SDL key-codes used on Linux can go way out of this range (because of the extra flag). However,
@@ -365,6 +386,12 @@ namespace ImGuiInterops
 		IO.KeyShift = InputState.IsShiftDown();
 		IO.KeyAlt = InputState.IsAltDown();
 		IO.KeySuper = false;
+
+		IO.AddKeyEvent(ImGuiMod_Ctrl, IO.KeyCtrl);
+		IO.AddKeyEvent(ImGuiMod_Shift, IO.KeyShift);
+		IO.AddKeyEvent(ImGuiMod_Alt, IO.KeyAlt);
+		IO.AddKeyEvent(ImGuiMod_Super, false); // Cmd/Super/Windows
+		IO.AddKeyEvent(ImGuiMod_Shortcut, IO.KeyCtrl); // Alias for Ctrl (non-macOS) _or_ Super (macOS).
 
 		// Copy buffers.
 		if (!InputState.GetKeysUpdateRange().IsEmpty())

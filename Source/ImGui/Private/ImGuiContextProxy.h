@@ -12,6 +12,7 @@
 
 #include <string>
 
+class FImGuiContextManager;
 
 // Represents a single ImGui context. All the context updates should be done through this proxy. During update it
 // broadcasts draw events to allow listeners draw their controls. After update it stores draw data.
@@ -30,6 +31,9 @@ public:
 
 	// Get the name of this context.
 	const FString& GetName() const { return Name; }
+
+	// Get the index
+	const int32 GetContextIndex() const { return ContextIndex; }
 
 	// Get draw data from the last frame.
 	const TArray<FImGuiDrawList>& GetDrawData() const { return DrawLists; }
@@ -62,6 +66,9 @@ public:
 	// Whether this context has an active item (read once per frame during context update).
 	bool HasActiveItem() const { return bHasActiveItem; }
 
+	// Whether this context has hovered over any window (read once per frame during context update).
+	bool HasHoveredAnyWindow() const { return bHasHoveredAnyWindow; }
+
 	// Whether ImGui will use the mouse inputs (read once per frame during context update).
 	bool WantsMouseCapture() const { return bWantsMouseCapture; }
 
@@ -79,12 +86,12 @@ public:
 	void DrawDebug();
 
 	// Tick to advance context to the next frame. Only one call per frame will be processed.
-	void Tick(float DeltaSeconds);
+	void Tick(float DeltaSeconds, FImGuiContextManager& ContextManager);
 
 private:
 
-	void BeginFrame(float DeltaTime = 1.f / 60.f);
-	void EndFrame();
+	void BeginFrame(FImGuiContextManager* ContextManager, float DeltaTime = 1.f / 60.f);
+	void EndFrame(FImGuiContextManager& ContextManager);
 
 	void UpdateDrawData(ImDrawData* DrawData);
 
@@ -101,6 +108,7 @@ private:
 
 	EMouseCursor::Type MouseCursor = EMouseCursor::None;
 	bool bHasActiveItem = false;
+	bool bHasHoveredAnyWindow = false;
 	bool bWantsMouseCapture = false;
 
 	bool bIsFrameStarted = false;

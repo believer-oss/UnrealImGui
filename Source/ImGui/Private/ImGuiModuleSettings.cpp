@@ -78,32 +78,17 @@ FImGuiModuleSettings::FImGuiModuleSettings(FImGuiModuleProperties& InProperties,
 	: Properties(InProperties)
 	, Commands(InCommands)
 {
-#if WITH_EDITOR
-	FCoreUObjectDelegates::OnObjectPropertyChanged.AddRaw(this, &FImGuiModuleSettings::OnPropertyChanged);
-#endif
-
 	// Delegate initializer to support settings loaded after this object creation (in stand-alone builds) and potential
 	// reloading of settings.
-	UImGuiSettings::OnSettingsLoaded.AddRaw(this, &FImGuiModuleSettings::InitializeAllSettings);
+	UImGuiSettings::OnSettingsLoaded.AddRaw(this, &FImGuiModuleSettings::UpdateSettings);
 
 	// Call initializer to support settings already loaded (editor).
-	InitializeAllSettings();
+	UpdateSettings();
 }
 
 FImGuiModuleSettings::~FImGuiModuleSettings()
 {
-
 	UImGuiSettings::OnSettingsLoaded.RemoveAll(this);
-
-#if WITH_EDITOR
-	FCoreUObjectDelegates::OnObjectPropertyChanged.RemoveAll(this);
-#endif
-}
-
-void FImGuiModuleSettings::InitializeAllSettings()
-{
-	UpdateSettings();
-	UpdateDPIScaleInfo();
 }
 
 void FImGuiModuleSettings::UpdateSettings()
@@ -117,14 +102,6 @@ void FImGuiModuleSettings::UpdateSettings()
 		SetUseSoftwareCursor(SettingsObject->bUseSoftwareCursor);
 		SetToggleInputKey(SettingsObject->ToggleInput);
 		SetCanvasSizeInfo(SettingsObject->CanvasSize);
-	}
-}
-
-void FImGuiModuleSettings::UpdateDPIScaleInfo()
-{
-	if (UImGuiSettings* SettingsObject = UImGuiSettings::Get())
-	{
-		SetDPIScaleInfo(SettingsObject->DPIScale);
 	}
 }
 
@@ -196,20 +173,3 @@ void FImGuiModuleSettings::SetDPIScaleInfo(const FImGuiDPIScaleInfo& ScaleInfo)
 	DPIScale = ScaleInfo;
 	OnDPIScaleChangedDelegate.Broadcast(DPIScale);
 }
-
-#if WITH_EDITOR
-
-void FImGuiModuleSettings::OnPropertyChanged(class UObject* ObjectBeingModified, struct FPropertyChangedEvent& PropertyChangedEvent)
-{
-	if (ObjectBeingModified == UImGuiSettings::Get())
-	{
-		UpdateSettings();
-		if (PropertyChangedEvent.MemberProperty
-			&& (PropertyChangedEvent.MemberProperty->GetFName() == GET_MEMBER_NAME_CHECKED(FImGuiModuleSettings, DPIScale)))
-		{
-			UpdateDPIScaleInfo();
-		}
-	}
-}
-
-#endif // WITH_EDITOR
